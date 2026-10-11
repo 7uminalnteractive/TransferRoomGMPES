@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GMPES • Mercado de Transferências</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--tx:#14181f;--mut:#6b7280;--ac:#0a7d3c;--bd:#e2e5ea;--rd:#c0392b}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1318;--card:#181e26;--tx:#e8ebf0;--mut:#8b94a3;--ac:#2ecc71;--bd:#2a313b;--rd:#ff6b5b}}
+*{box-sizing:border-box}body{margin:0;font:15px system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+header{padding:12px 16px;background:var(--card);border-bottom:1px solid var(--bd);display:flex;justify-content:space-between;align-items:center;gap:8px;position:sticky;top:0;z-index:2}
+h1{font-size:16px;margin:0}main{max-width:760px;margin:0 auto;padding:12px}
+.banner{padding:8px 12px;border-radius:8px;font-size:13px;margin-bottom:10px;background:var(--card);border:1px solid var(--bd)}
+.banner.on{border-color:var(--ac);color:var(--ac)}.banner.off{border-color:var(--rd);color:var(--rd)}
+nav{display:flex;gap:6px;overflow-x:auto;margin-bottom:10px}
+nav button{white-space:nowrap}
+button,input,select,textarea{font:inherit;color:inherit;border:1px solid var(--bd);background:var(--card);border-radius:8px;padding:8px 10px}
+button{cursor:pointer}button.p{background:var(--ac);color:#fff;border-color:var(--ac)}button.sel{border-color:var(--ac);color:var(--ac);font-weight:600}
+button.d{color:var(--rd)}button:disabled{opacity:.5}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.row{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap}
+.m{color:var(--mut);font-size:13px}.acts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.f{display:flex;gap:6px;margin-bottom:10px}.f input,.f select{flex:1;min-width:0}
+.auth{max-width:340px;margin:40px auto;display:flex;flex-direction:column;gap:8px}
+dialog{border:1px solid var(--bd);border-radius:12px;background:var(--card);color:var(--tx);width:min(92vw,380px)}
+dialog form{display:flex;flex-direction:column;gap:8px}
+.tag{font-size:11px;padding:2px 6px;border-radius:6px;border:1px solid var(--bd)}
+</style>
+</head>
+<body>
+<header><h1>⚽ GMPES • Transferências</h1><div id="who" class="m"></div></header>
+<main id="app">Carregando…</main>
+<dialog id="dlg"></dialog>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script>
+const sb = supabase.createClient('https://fjwuoypohrxxbbqmycax.supabase.co','sb_publishable_x4oRgo0NQK9kSNI2jTVFpg_v1FXT8oT');
+const $ = s => document.querySelector(s), app = $('#app'), dlg = $('#dlg');
+const S = {tab:'market', clubs:{}, me:null, win:null, q:'', club:''};
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const brl = n => n == null ? '—' : 'R$ ' + Number(n).toLocaleString('pt-BR');
+const err = e => { if (e) { alert(e.message || e); return true; } };
+const winOpen = () => S.win && Date.now() >= new Date(S.win.window_open) && Date.now() <= new Date(S.win.window_close);
+const fmt = d => new Date(d).toLocaleString('pt-BR', {dateStyle:'short', timeStyle:'short'});
+const pinfo = p => `${esc(p.name)} <span class="m">· ${p.age ?? '?'} anos${p.preferred_foot ? ' · pé ' + p.preferred_foot.toLowerCase() : ''} · ${brl(p.monthly_salary)}/mês</span>`;
+
+async function boot() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return authView();
+  const { data: cl } = await sb.from('clubs').select('*');
+  S.clubs = Object.fromEntries((cl || []).map(c => [c.id, c]));
+  const { data: w } = await sb.from('settings').select('*').single(); S.win = w;
+  const { data: me } = await sb.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
+  if (!me) return claimView();
+  S.me = me;
+  $('#who').innerHTML = `${esc(S.clubs[me.club_id]?.name || 'Admin')} · <a href="#" onclick="pwView(false);return false">trocar senha</a> · <a href="#" onclick="sb.auth.signOut().then(boot);return false">sair</a>`;
+  if (me.must_change_password) return pwView(true);
+  render();
+}
+
+function pwView(forced) {
+  app.innerHTML = `<div class="auth"><p>${forced ? '<b>Primeiro acesso:</b> defina uma nova senha para continuar.' : 'Trocar senha'}</p>
+  <input id="n1" type="password" placeholder="Nova senha (mín. 6)"><input id="n2" type="password" placeholder="Repita a nova senha">
+  <button class="p" id="sv">Salvar senha</button>${forced ? '' : '<button onclick="render()">Cancelar</button>'}</div>`;
+  $('#sv').onclick = async () => {
+    const a = $('#n1').value;
+    if (a.length < 6) return alert('A senha precisa ter pelo menos 6 caracteres.');
+    if (a !== $('#n2').value) return alert('As senhas não são iguais.');
+    const { error } = await sb.auth.updateUser({ password: a });
+    if (err(error)) return;
+    await sb.rpc('password_changed');
+    alert('Senha alterada!');
+    boot();
+  };
+}
+
+function authView() {
+  $('#who').textContent = '';
+  app.innerHTML = `<div class="auth"><input id="em" type="email" placeholder="E-mail"><input id="pw" type="password" placeholder="Senha (mín. 6)">
+  <button class="p" id="li">Entrar</button><button id="su">Criar conta</button></div>`;
+  const cred = () => ({ email: $('#em').value.trim(), password: $('#pw').value });
+  $('#li').onclick = async () => { const { error } = await sb.auth.signInWithPassword(cred()); if (!err(error)) boot(); };
+  $('#su').onclick = async () => { const { data, error } = await sb.auth.signUp(cred()); if (err(error)) return; if (!data.session) alert('Conta criada. Confirme o e-mail (se pedido) e entre.'); else boot(); };
+}
+
+function claimView() {
+  app.innerHTML = `<div class="auth"><p>Digite o código do seu clube (fornecido pela organização).</p><input id="cd" placeholder="Código"><button class="p" id="go">Vincular</button><a href="#" onclick="sb.auth.signOut().then(boot)">sair</a></div>`;
+  $('#go').onclick = async () => { const { error } = await sb.rpc('claim_club', { p_code: $('#cd').value }); if (!err(error)) boot(); };
+}
+
+function render() {
+  const tabs = [['market','Mercado'],['squad','Meu elenco'],['bids','Propostas'],['hist','Histórico']];
+  if (S.me.role === 'admin') tabs.push(['admin','Admin']);
+  const on = winOpen();
+  app.innerHTML = `<div class="banner ${on?'on':'off'}">${on ? '🟢 Janela aberta até ' + fmt(S.win.window_close) : '🔴 Janela fechada · abre em ' + fmt(S.win.window_open) + ' e fecha em ' + fmt(S.win.window_close)}</div>
+  <nav>${tabs.map(([k,l]) => `<button class="${S.tab===k?'sel':''}" onclick="S.tab='${k}';render()">${l}</button>`).join('')}</nav><div id="v">…</div>`;
+  ({market, squad, bids, hist, admin})[S.tab]();
+}
+
+async function market() {
+  const { data, error } = await sb.from('listings').select('*, players(*)').eq('status','open').order('created_at',{ascending:false});
+  if (err(error)) return;
+  const draw = () => {
+    const q = S.q.toLowerCase();
+    const rows = data.filter(l => l.club_id !== S.me.club_id && (!S.club || l.club_id == S.club) && l.players.name.toLowerCase().includes(q));
+    $('#list').innerHTML = rows.map(l => `<div class="card"><div class="row"><b>${pinfo(l.players)}</b><span class="tag">${esc(S.clubs[l.club_id].name)}</span></div>
+      <div class="m">Pedido: ${brl(l.asking_price)}${l.notes ? ' · ' + esc(l.notes) : ''}</div>
+      ${S.me.club_id ? `<div class="acts"><button class="p" ${winOpen()?'':'disabled'} onclick="bidDlg(${l.id})">Fazer proposta</button></div>` : ''}</div>`).join('') || '<p class="m">Nenhum jogador anunciado.</p>';
+  };
+  $('#v').innerHTML = `<div class="f"><input placeholder="Buscar jogador" value="${esc(S.q)}" oninput="S.q=this.value;window._d()"><select onchange="S.club=this.value;window._d()"><option value="">Todos os clubes</option>${Object.values(S.clubs).filter(c=>c.id!==S.me.club_id).map(c=>`<option value="${c.id}" ${S.club==c.id?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div><div id="list"></div>`;
+  window._d = draw; window._mk = data; draw();
+}
+
+async function squad() {
+  if (!S.me.club_id) return $('#v').innerHTML = '<p class="m">Admin não tem elenco.</p>';
+  const [{ data: ps, error }, { data: ls }] = await Promise.all([
+    sb.from('players').select('*').eq('club_id', S.me.club_id).order('name'),
+    sb.from('listings').select('*').eq('club_id', S.me.club_id).eq('status','open')]);
+  if (err(error)) return;
+  const L = Object.fromEntries((ls || []).map(l => [l.player_id, l]));
+  $('#v').innerHTML = ps.map(p => `<div class="card"><div class="row"><b>${pinfo(p)}</b>${L[p.id] ? `<span class="tag">À venda · ${brl(L[p.id].asking_price)}</span>` : ''}</div>
+    <div class="acts">${L[p.id] ? `<button class="d" onclick="unlist(${L[p.id].id})">Retirar anúncio</button>` : `<button ${winOpen()?'':'disabled'} onclick="listDlg(${p.id},'${esc(p.name).replace(/'/g,'')}')">Anunciar</button>`}</div></div>`).join('');
+}
+
+function listDlg(id, name) {
+  dlg.innerHTML = `<form method="dialog"><b>Anunciar ${name}</b><input id="pr" type="number" min="0" placeholder="Preço pedido (R$)"><textarea id="nt" placeholder="Observação (opcional)"></textarea>
+  <div class="acts"><button value="x">Cancelar</button><button class="p" id="ok" value="y">Anunciar</button></div></form>`;
+  dlg.showModal();
+  $('#ok').onclick = async e => { e.preventDefault(); const { error } = await sb.from('listings').insert({ player_id: id, club_id: S.me.club_id, asking_price: $('#pr').value || null, notes: $('#nt').value || null }); if (!err(error)) { dlg.close(); squad(); } };
+}
+async function unlist(id) { const { error } = await sb.from('listings').update({ status: 'withdrawn' }).eq('id', id); if (!err(error)) squad(); }
+
+async function bidDlg(lid) {
+  const l = window._mk.find(x => x.id === lid);
+  const { data: mine } = await sb.from('players').select('id,name').eq('club_id', S.me.club_id).order('name');
+  dlg.innerHTML = `<form method="dialog"><b>Proposta por ${esc(l.players.name)}</b><span class="m">Pedido: ${brl(l.asking_price)}</span>
+  <input id="am" type="number" min="0" placeholder="Valor (R$)"><select id="sw"><option value="">Sem troca</option>${mine.map(p => `<option value="${p.id}">Troca: ${esc(p.name)}</option>`).join('')}</select>
+  <textarea id="ms" placeholder="Mensagem (opcional)"></textarea><div class="acts"><button value="x">Cancelar</button><button class="p" id="ok" value="y">Enviar</button></div></form>`;
+  dlg.showModal();
+  $('#ok').onclick = async e => { e.preventDefault(); const { error } = await sb.from('bids').insert({ listing_id: lid, bidder_club_id: S.me.club_id, amount: $('#am').value || 0, swap_player_id: $('#sw').value || null, message: $('#ms').value || null }); if (!err(error)) { dlg.close(); alert('Proposta enviada!'); } };
+}
+
+async function bids() {
+  const { data, error } = await sb.from('bids').select('*, listings(club_id, status, players(name)), swap:players!swap_player_id(name)').order('created_at',{ascending:false});
+  if (err(error)) return;
+  const st = {pending:'Pendente',accepted:'Aceita',rejected:'Recusada',withdrawn:'Retirada',countered:'Contraproposta'};
+  const card = (b, recv) => `<div class="card"><div class="row"><b>${esc(b.listings.players.name)}</b><span class="tag">${st[b.status]}</span></div>
+    <div class="m">${recv ? 'De ' + esc(S.clubs[b.bidder_club_id].name) : 'Para ' + esc(S.clubs[b.listings.club_id].name)} · ${brl(b.amount)}${b.swap ? ' + troca: ' + esc(b.swap.name) : ''}${b.message ? ' · ' + esc(b.message) : ''}</div>
+    ${b.status === 'pending' ? `<div class="acts">${recv ? `<button class="p" ${winOpen()?'':'disabled'} onclick="acc(${b.id})">Aceitar</button><button class="d" onclick="setBid(${b.id},'rejected')">Recusar</button>` : `<button class="d" onclick="setBid(${b.id},'withdrawn')">Retirar</button>`}</div>` : ''}</div>`;
+  const rec = data.filter(b => b.listings.club_id === S.me.club_id), snt = data.filter(b => b.bidder_club_id === S.me.club_id);
+  $('#v').innerHTML = `<h3>Recebidas</h3>${rec.map(b => card(b, true)).join('') || '<p class="m">Nenhuma.</p>'}<h3>Enviadas</h3>${snt.map(b => card(b, false)).join('') || '<p class="m">Nenhuma.</p>'}`;
+}
+async function acc(id) { if (!confirm('Aceitar e concluir a transferência?')) return; const { error } = await sb.rpc('accept_bid', { p_bid: id }); if (!err(error)) bids(); }
+async function setBid(id, status) { const { error } = await sb.from('bids').update({ status }).eq('id', id); if (!err(error)) bids(); }
+
+async function hist() {
+  const { data, error } = await sb.from('transfers').select('*, players(name)').order('created_at',{ascending:false}).limit(100);
+  if (err(error)) return;
+  $('#v').innerHTML = data.map(t => `<div class="card"><b>${esc(t.players.name)}</b><div class="m">${esc(S.clubs[t.from_club_id].name)} → ${esc(S.clubs[t.to_club_id].name)} · ${brl(t.fee)} · ${fmt(t.created_at)}</div></div>`).join('') || '<p class="m">Nenhuma transferência ainda.</p>';
+}
+
+async function admin() {
+  const { data, error } = await sb.from('club_codes').select('code, clubs(name, division)').order('club_id');
+  if (err(error)) return;
+  const loc = d => { const x = new Date(d); x.setMinutes(x.getMinutes() - x.getTimezoneOffset()); return x.toISOString().slice(0,16); };
+  $('#v').innerHTML = `<div class="card"><b>Janela</b><div class="f" style="margin-top:8px"><input id="wo" type="datetime-local" value="${loc(S.win.window_open)}"><input id="wc" type="datetime-local" value="${loc(S.win.window_close)}"></div><button class="p" onclick="saveWin()">Salvar janela</button></div>
+  <h3>Códigos dos clubes</h3>${data.map(c => `<div class="card row"><span>${esc(c.clubs.name)} <span class="m">(${c.clubs.division})</span></span><code>${esc(c.code)}</code></div>`).join('')}`;
+}
+async function saveWin() {
+  const { error } = await sb.from('settings').update({ window_open: new Date($('#wo').value).toISOString(), window_close: new Date($('#wc').value).toISOString() }).eq('id', 1);
+  if (!err(error)) { const { data } = await sb.from('settings').select('*').single(); S.win = data; render(); }
+}
+boot();
+</script>
+</body>
+</html>
